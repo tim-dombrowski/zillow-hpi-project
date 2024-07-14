@@ -1,0 +1,187 @@
+---
+title: "State-Level ZHVI Comparisons"
+output: html_notebook
+---
+
+## Preliminary Work: Install/Load Packages
+
+To try and ensure that this R Notebook will run successfully, we'll use the [renv package](https://cran.r-project.org/web/packages/renv/index.html) to create a project-specific library of packages. This will allow us to install the packages that we need for this project without affecting any other projects that we may be working on. Additionally, the project library will track the specific versions of the dependency packages so that any updates to those packages will not break this project.
+
+The code chunk below will first install the renv package if it is not already installed. Then we will load the package. Next, we'll use the `restore()` function to install any packages listed in the renv.lock file. Once these packages are installed, we can load them into the R session using the `library()` commands. Below the code chunk, we'll list out the packages that will be used in the project demo. And if you run into any trouble using renv, then you can use the second code chunk below and that should be an even more reliable approach to install the required packages.
+
+```{r setup, results='hide', message=FALSE}
+# Install renv package if not already installed
+if(!"renv" %in% installed.packages()[,"Package"]) install.packages("renv")
+# Load renv package
+library(renv)
+# Use restore() to install any packages listed in the renv.lock file
+renv::restore(clean=TRUE, lockfile="../renv.lock")
+# Load in the packages
+library(tidyverse)
+library(fst)
+library(xts)
+library(urbnmapr)
+```
+
+* The [tidyverse package](https://cran.r-project.org/package=tidyverse)
+* The [fst package](https://cran.r-project.org/package=fst)
+* The [xts package](https://cran.r-project.org/package=xts) is short for 'eXtensible Time Series', which contains tools for working with time series data.
+* The [urbnmapr package](https://github.com/UrbanInstitute/urbnmapr) has mapping data for various geographies.
+  * This package is not available through the standard CRAN repository, rather through GitHub. This information is contained within the renv.lock file; however, if you wish to download manually below, the [devtools package](https://cran.r-project.org/package=devtools) contains the `install_github()` function, which can be used to install the package from GitHub.
+* The [rmarkdown package](https://cran.r-project.org/package=rmarkdown) is used to generate this R Notebook.
+
+Since the rmarkdown functionality is built into RStudio, this last one is automatically loaded when you open RStudio. So no need to use the `library()` function for it. Another observation to make about the code chunk above is that it is labeled as `setup`, which is a special name, which the R Notebook will recognize and automatically run prior to running any other code chunk. This is useful for loading in packages and setting up other global options that will be used throughout the notebook. 
+
+Then if you wish to try and update the versions of the various R packages in the lock file, you can use the `renv::update()` function to update the packages in the project library. However, it is possible that these updates could break the code in this notebook. If so, you may need to adapt the code to work with the updated packages.
+
+My recommendation is to first run through the code using the versions of the packages in the lock file. Then if you want to try and update the packages, you can do so and then run through the code again to see if it still works. If not, you can always revert back to the lock file versions using the `renv::restore()` function.
+
+If you update the packages and get everything working successfully, then you can update the lock file using the `renv::snapshot()` function. This will update the lock file with the versions of the packages that are currently installed in the project library. Then you can commit the updated lock file to the repository so that others can use the updated versions of the packages.
+
+### Alternative Package Installation Code
+
+If you run into any trouble using renv in the code chunk above, then you can use the code chunk below to install the required packages for this analysis. This method will first check if you have already installed the packages. If any are missing, it will then install them. Then it will load the packages into the R session. A potential flaw in this approach compared to using renv is that it will simply install the latest versions of the packages, which could potentially break some of the code in this notebook if any of the updates aren't backwards compatible. 
+
+As long as you have downloaded the entire project repository, the renv chunk above will likely be managing the packages. Thus, the `eval=FALSE` option is used to prevent this chunk from running unless manually executed. So if you only downloaded this one Rmd file, this code chunk should take care of installing the packages for you.
+
+```{r setup2, results='hide', message=FALSE, eval=FALSE}
+# Create list of packages needed for this exercise
+list.of.packages = c("devtools","tidyverse","fst","xts","rmarkdown")
+# Check if any have not yet been installed
+new.packages = list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+# If any need to be installed, install them
+if(length(new.packages)) install.packages(new.packages)
+# Urban Institute Mapping package downloaded via GitHub using devtools
+library(devtools)
+install_github("UrbanInstitute/urbnmapr")
+# Load in the packages
+library(tidyverse)
+library(fst)
+library(xts)
+library(urbnmapr)
+```
+
+### Set Directories and Paths
+
+The code chunk below sets the paths to the cleaned data files and any relevant directories.
+
+```{r setpaths}
+# Specify path to cleaned data files 
+msapath = "../Data/Clean/ZHVI_clean_msa.fst"
+uspath = "../Data/Clean/ZHVI_clean_country.fst"
+# Create a figures directory to save any plots
+figdir = "Figures/"
+if (!dir.exists(figdir)) dir.create(figdir)
+```
+
+## Import Cleaned ZHVI Data
+
+The code chunk below imports the cleaned ZHVI data from the fst files saved in importzhvi.Rmd.
+
+```{r importdata}
+# Import cleaned ZHVI data
+ZHVI_MSA = read_fst(msapath)
+ZHVI_US = read_fst(uspath)
+```
+
+## Housing Returns
+
+The first step in the analysis is to transform the ZHVI data into measures of housing returns. The rationale for this step is rooted in the statistical concept of [time series stationarity](https://search.brave.com/search?q=time+series+stationarity). Check out the [Bitcoin Time Series Analysis Project](https://github.com/tim-dombrowski/bitcoin-timeseries-project) for a more detailed exploration of this concept.
+
+### National Housing Returns
+
+Since the country-level ZHVI data is just a single time series, we can use this as a detailed demonstration of the process to transform the ZHVI data into housing returns. 
+
+1. The first step is to convert the ZHVI data into an xts object, using the date column as the index. 
+2. Then we'll compute the monthly log returns, which is difference between the natural logarithms (`log()`) of the current month's ZHVI to the previous month's ZHVI (`lag()`). 
+3. This is then multiplied by 12 to annualize the returns, and then by 100 to switch the units to percentages instead of decimals. 
+
+This annualized housing return series is then saved to the `NATIONAL` data frame as a new variable, `AnnGrowth`.
+
+```{r usreturns}
+# Convert to xts object
+usxts = xts(ZHVI_US$ZHVI,order.by=ZHVI_US$Date)
+# Compute monthly log returns
+usrets = log(as.numeric(usxts)) - log(as.numeric(lag(usxts)))
+# Convert to annualized percentages and save to full table
+ZHVI_US$AnnGrowth = usrets*12*100
+```
+
+
+### Metro-level Housing Returns
+
+The next code chunk will be a large one since we will be looping through each of the regions to transform the ZHVI data into annualized housing returns. Additionally, we'll estimate a market model regression for each region, where the region's housing returns are regressed on the national housing returns. The residuals from these regressions will be saved to the data frame as well for later analysis. 
+
+The first few lines pre-allocate the outputs from the loop. This includes the annualized housing returns, fitted regression models for each region's housing returns on the national housing return, as well as the model residuals (*abnormal returns*) and some rolling averages of those variables. Then we'll loop through each state to compute and extract all those results.
+
+Since there are less than 1000 MSAs, this loop shouldn't take too long to run. But it may take several minutes depending on your machine.
+
+```{r msaloop, echo=FALSE}
+# Preallocate column for annualized housing returns
+ZHVI_MSA$AnnGrowth = rep(NA,nrow(ZHVI_MSA),1)
+# Preallocate list to compile market-model regression results
+LinModels_MSA = vector(mode="list", length(levels(ZHVI_MSA$RegionID)))
+names(LinModels_MSA) = levels(ZHVI_MSA$RegionName)
+# Preallocate column for regression residuals
+ZHVI_MSA$RegResids = rep(NA,nrow(ZHVI_MSA),1)
+# Preallocate columns for rolling averages
+ZHVI_MSA$ZHVIRollMean = rep(NA,nrow(ZHVI_MSA),1)
+ZHVI_MSA$AnnGrowthRollMean = rep(NA,nrow(ZHVI_MSA),1)
+ZHVI_MSA$RegResidsRollMean = rep(NA,nrow(ZHVI_MSA),1)
+# Set iteration counter and timer
+i=1
+loopt=proc.time()
+# Loop through each MSA
+#msa = levels(ZHVI_MSA$RegionName)[1]
+for (msa in levels(ZHVI_MSA$RegionName)) {
+  # Start loop timer
+  t = proc.time()
+  # Identify indices for the msa in full data frame
+  msaidx = ZHVI_MSA$RegionName==msa # & !is.na(ZHVI_MSA$ZHVI)
+  # Extract that subset
+  msadf = ZHVI_MSA[msaidx,]
+  # Impute missing observations (below uses linear interpolation if previously observed)
+  msadf$ZHVI = approxfun(1:nrow(msadf),msadf$ZHVI)(1:nrow(msadf))
+  # Replace missing with imputed values in main data
+  ZHVI_MSA$ZHVI[msaidx] = msadf$ZHVI
+  # Convert to xts object
+  msaxts = xts(msadf$ZHVI,order.by=msadf$Date)
+  # Compute monthly log returns
+  msarets = log(as.numeric(msaxts)) - log(as.numeric(lag(msaxts)))
+  # Convert to annualized percentages and save to full table
+  ZHVI_MSA$AnnGrowth[msaidx] = msarets*12*100
+  # Regress these MSA-level returns on the national returns
+  LinModels_MSA[[i]] = lm(ZHVI_MSA$AnnGrowth[msaidx]~AnnGrowth,data=ZHVI_US)
+  # Add model R-squared to saved regression results list
+  LinModels_MSA[[i]]$r.squared = summary(LinModels_MSA[[i]])$r.squared
+  # Extract model residuals to full table
+  ZHVI_MSA$RegResids[msaidx & !is.na(ZHVI_MSA$ZHVI)] = c(NA,LinModels_MSA[[i]]$residuals)
+  # Compute 12-month rolling means for smoother year-over-year values
+  ZHVI_MSA$ZHVIRollMean[msaidx] = rollmean(msadf$ZHVI,12,fill=NA,align="right")
+  ZHVI_MSA$AnnGrowthRollMean[msaidx] = rollmean(ZHVI_MSA$AnnGrowth[msaidx],12,fill=NA,align="right")
+  ZHVI_MSA$RegResidsRollMean[msaidx] = rollmean(ZHVI_MSA$RegResids[msaidx],12,fill=NA,align="right")
+  # Stop loop timer and output result
+  T = proc.time() - t
+  print(paste("Iteration", as.character(i), "for", msa, "completed in", as.character(round(T[3],2)), "seconds."))
+  # Increment counter
+  i=i+1
+}
+loopT = proc.time()-loopt
+print(paste("Full MSA-level Cleaning completed in", as.character(round(loopT[3],2)), "seconds."))
+```
+
+Let's output the top 6 and bottom 6 metros from the market models for the most recent month:
+
+```{r msarankings1mo}
+MSAnow = ZHVI_MSA[ZHVI_MSA$Date==max(ZHVI_MSA$Date),]
+head(MSAnow[order(-MSAnow$RegResids),c(2,3,6,7,8,9)])
+head(MSAnow[order(MSAnow$RegResids),c(2,3,6,7,8,9)])
+```
+
+Then for a longer-term comparison, let's examine the top 6 and bottom 6 of the residual rolling averages.
+
+```{r msarankings1yr}
+head(MSAnow[order(-MSAnow$RegResidsRollMean),c(2,3,6,10,11,12)])
+head(MSAnow[order(MSAnow$RegResidsRollMean),c(2,3,6,10,11,12)])
+```
+

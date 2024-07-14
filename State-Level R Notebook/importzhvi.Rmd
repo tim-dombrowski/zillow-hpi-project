@@ -1,0 +1,146 @@
+---
+title: "State-Level ZHVI Data Import and Cleaning"
+output: html_notebook
+---
+
+## Preliminary Work: Install/Load Packages
+
+To try and ensure that this R Notebook will run successfully, we'll use the [renv package](https://cran.r-project.org/web/packages/renv/index.html) to create a project-specific library of packages. This will allow us to install the packages that we need for this project without affecting any other projects that we may be working on. Additionally, the project library will track the specific versions of the dependency packages so that any updates to those packages will not break this project.
+
+The code chunk below will first install the renv package if it is not already installed. Then we will load the package. Next, we'll use the `restore()` function to install any packages listed in the renv.lock file. Once these packages are installed, we can load them into the R session using the `library()` commands. Below the code chunk, we'll list out the packages that will be used in the project demo. And if you run into any trouble using renv, then you can use the second code chunk below and that should be an even more reliable approach to install the required packages.
+
+```{r setup, results='hide', message=FALSE}
+# Install renv package if not already installed
+if(!"renv" %in% installed.packages()[,"Package"]) install.packages("renv")
+# Load renv package
+library(renv)
+# Use restore() to install any packages listed in the renv.lock file
+renv::restore(clean=TRUE, lockfile="../renv.lock")
+# Load in the packages
+library(tidyverse)
+library(fst)
+```
+
+* The [tidyverse package](https://cran.r-project.org/package=tidyverse)
+* The [fst package](https://cran.r-project.org/package=fst)
+* The [rmarkdown package](https://cran.r-project.org/package=rmarkdown) is used to generate this R Notebook.
+
+Since the rmarkdown functionality is built into RStudio, this last one is automatically loaded when you open RStudio. So no need to use the `library()` function for it. Another observation to make about the code chunk above is that it is labeled as `setup`, which is a special name, which the R Notebook will recognize and automatically run prior to running any other code chunk. This is useful for loading in packages and setting up other global options that will be used throughout the notebook. 
+
+Then if you wish to try and update the versions of the various R packages in the lock file, you can use the `renv::update()` function to update the packages in the project library. However, it is possible that these updates could break the code in this notebook. If so, you may need to adapt the code to work with the updated packages.
+
+My recommendation is to first run through the code using the versions of the packages in the lock file. Then if you want to try and update the packages, you can do so and then run through the code again to see if it still works. If not, you can always revert back to the lock file versions using the `renv::restore()` function.
+
+If you update the packages and get everything working successfully, then you can update the lock file using the `renv::snapshot()` function. This will update the lock file with the versions of the packages that are currently installed in the project library. Then you can commit the updated lock file to the repository so that others can use the updated versions of the packages.
+
+### Alternative Package Installation Code
+
+If you run into any trouble using renv in the code chunk above, then you can use the code chunk below to install the required packages for this analysis. This method will first check if you have already installed the packages. If any are missing, it will then install them. Then it will load the packages into the R session. A potential flaw in this approach compared to using renv is that it will simply install the latest versions of the packages, which could potentially break some of the code in this notebook if any of the updates aren't backwards compatible. 
+
+As long as you have downloaded the entire project repository, the renv chunk above will likely be managing the packages. Thus, the `eval=FALSE` option is used to prevent this chunk from running unless manually executed. So if you only downloaded this one Rmd file, this code chunk should take care of installing the packages for you.
+
+```{r setup2, results='hide', message=FALSE, eval=FALSE}
+# Create list of packages needed for this exercise
+list.of.packages = c("tidyverse","xts","rmarkdown")
+# Check if any have not yet been installed
+new.packages = list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+# If any need to be installed, install them
+if(length(new.packages)) install.packages(new.packages)
+# Load in the packages
+library(tidyverse)
+library(xts)
+```
+
+### Set Directories and Paths
+
+The code chunk below sets the paths for the data folders and the url for the ZHVI data (from [Zillow Research Data](https://www.zillow.com/research/data/).
+
+```{r setpaths}
+# Specify data folders
+datadir = "../Data/"
+if (!dir.exists(datadir)) dir.create(datadir)
+rawdir = paste(datadir,"Raw/",sep="")
+cleandir = paste(datadir,"Clean/",sep="")
+# Specify url for ZHVI data from website
+zhviurl = "https://files.zillowstatic.com/research/public_csvs/zhvi/State_zhvi_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv"
+```
+
+
+## Import and Summarize ZHVI Data
+
+### Download Data
+
+The first step in the analysis is to download/import the ZHVI data. The code chunk below uses the `read_csv()` function from the readr package (part of tidyverse) to import the csv data located at the url.
+
+```{r zhvidownload}
+ZHVIraw = read_csv(zhviurl, show_col_types=FALSE)
+```
+
+### Summarize Raw Data
+
+To summarize the raw data, let's output the dimensions of the data frame and the first few rows of the data frame. The 51 rows correspond with the 50 states + DC, and the many columns represent the monthly time dimension.
+
+```{r rawsummary}
+dim(ZHVIraw)
+head(ZHVIraw)
+```
+
+### Save Raw Data
+
+Now let's save the raw data to a csv file in the raw data folder. This will let you access the original version again without having to re-download from the server. This can be useful for troubleshooting the cleaning process. This version will also be very portable to other analysis software. We'll save the cleaned data in an R-specific format later.
+
+```{r rawsave}
+write_csv(ZHVIraw, paste0(rawdir,"ZHVI_raw_state.csv"))
+```
+
+## Data Cleaning
+
+### Geographic Variables
+
+The RegionID variable is a unique numeric identifier for each region, and the SizeRank variable is simply a ranking from 1 to N. Let's convert these to integers, since that will be more efficient than a standard numeric format.
+
+```{r integers}
+ZHVIraw$RegionID = as.integer(ZHVIraw$RegionID)
+ZHVIraw$SizeRank = as.integer(ZHVIraw$SizeRank)
+```
+
+The RegionName variable is a character array with the names of the regions. Since each is unique, we can leave this as is.
+
+RegionType simply distinguishes the country-level observation in row 1 from the msa-level observations in the remaining rows. We'll split these into separate data frames later, and then we can just drop the variable.
+
+Next up is StateName, which is actually empty for this state-level data. The state names are already in the RegionName variable, so we can leave this as missing values.
+
+Then all of the columns after that are the monthly ZHVI values. Those are already in a numeric format, so we can leave those as is, for now.
+
+### State-Level ZHVI Data
+
+The remaining rows in the raw data capture the state-level time series. Similarly, we'll transform this into a long panel format. 
+
+```{r statecleaning}
+ZHVI_State = pivot_longer(ZHVIraw,
+                        cols=6:ncol(ZHVIraw),
+                        names_to="Date",
+                        values_to="ZHVI")
+# Format long variables (regions as factors, dates as dates)
+ZHVI_State$RegionID = as.factor(ZHVI_State$RegionID)
+ZHVI_State$RegionName = as.factor(ZHVI_State$RegionName)
+ZHVI_State$Date = as.Date(ZHVI_State$Date)
+```
+
+#### Save Clean State Data
+
+Now let's save the cleaned state-level data as an fst file in the cleaned data folder.
+
+```{r msasave}
+write_fst(ZHVI_State, paste0(cleandir,"ZHVI_clean_state.fst"))
+```
+
+### Summary of Cleaned Data
+
+Let's summarize the cleaned data by outputting the dimensions of the data frame and the first few rows of the data frame.
+
+```{r cleansummary}
+dim(ZHVI_State)
+head(ZHVI_State)
+```
+
