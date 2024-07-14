@@ -1,5 +1,5 @@
 ---
-title: "State-Level ZHVI Comparisons"
+title: "Metro-Level ZHVI Comparisons"
 output: html_notebook
 ---
 
@@ -19,6 +19,7 @@ renv::restore(clean=TRUE, lockfile="../renv.lock")
 # Load in the packages
 library(tidyverse)
 library(fst)
+library(doParallel)
 library(xts)
 library(urbnmapr)
 ```
@@ -108,67 +109,149 @@ ZHVI_US$AnnGrowth = usrets*12*100
 ```
 
 
-### Metro-level Housing Returns
+### Metro-level Housing Returns Loop
 
-The next code chunk will be a large one since we will be looping through each of the regions to transform the ZHVI data into annualized housing returns. Additionally, we'll estimate a market model regression for each region, where the region's housing returns are regressed on the national housing returns. The residuals from these regressions will be saved to the data frame as well for later analysis. 
+The next code chunk will be a large one since we will be looping through each of the regions to transform the ZHVI data into annualized housing returns. Additionally, we'll estimate a market model regression for each region, where the region's housing returns are regressed on the national housing returns. The residuals from these regressions will be saved to the data frame for later analysis. Be sure to review the comments in the code for a more detailed explanation of each step.
 
-The first few lines pre-allocate the outputs from the loop. This includes the annualized housing returns, fitted regression models for each region's housing returns on the national housing return, as well as the model residuals (*abnormal returns*) and some rolling averages of those variables. Then we'll loop through each state to compute and extract all those results.
+Since there are less than 1000 MSAs, this loop shouldn't take too long to run. But it may take a few minutes depending on your machine. There is also potential for speeding up the loop on multi-core processors by working in parallel. This speed improvement of such parallelization will be demonstrated after first using a standard loop.
 
-Since there are less than 1000 MSAs, this loop shouldn't take too long to run. But it may take several minutes depending on your machine.
-
-```{r msaloop, echo=FALSE}
-# Preallocate column for annualized housing returns
-ZHVI_MSA$AnnGrowth = rep(NA,nrow(ZHVI_MSA),1)
-# Preallocate list to compile market-model regression results
-LinModels_MSA = vector(mode="list", length(levels(ZHVI_MSA$RegionID)))
-names(LinModels_MSA) = levels(ZHVI_MSA$RegionName)
-# Preallocate column for regression residuals
-ZHVI_MSA$RegResids = rep(NA,nrow(ZHVI_MSA),1)
-# Preallocate columns for rolling averages
-ZHVI_MSA$ZHVIRollMean = rep(NA,nrow(ZHVI_MSA),1)
-ZHVI_MSA$AnnGrowthRollMean = rep(NA,nrow(ZHVI_MSA),1)
-ZHVI_MSA$RegResidsRollMean = rep(NA,nrow(ZHVI_MSA),1)
-# Set iteration counter and timer
-i=1
+```{r msaloop}
+# Start timer
 loopt=proc.time()
+# Extract unique region names
+regions = levels(ZHVI_MSA$RegionName)
+# Create list for storing market model results
+MktModels_MSA = list()
 # Loop through each MSA
-#msa = levels(ZHVI_MSA$RegionName)[1]
-for (msa in levels(ZHVI_MSA$RegionName)) {
-  # Start loop timer
-  t = proc.time()
-  # Identify indices for the msa in full data frame
-  msaidx = ZHVI_MSA$RegionName==msa # & !is.na(ZHVI_MSA$ZHVI)
+#region = regions[1]
+for (region in regions) {
+  # Start loop timer (uncomment to use)
+  # t = proc.time()
+  # Identify indices for the region in full data frame
+  idx = ZHVI_MSA$RegionName==region
   # Extract that subset
-  msadf = ZHVI_MSA[msaidx,]
-  # Impute missing observations (below uses linear interpolation if previously observed)
-  msadf$ZHVI = approxfun(1:nrow(msadf),msadf$ZHVI)(1:nrow(msadf))
+  regiondf = ZHVI_MSA[idx,]
+  # Impute any missing observations in middle of time series
+  # Below uses linear interpolation within observed time range
+  regiondf$ZHVI = approxfun(1:nrow(regiondf),regiondf$ZHVI)(1:nrow(regiondf))
   # Replace missing with imputed values in main data
-  ZHVI_MSA$ZHVI[msaidx] = msadf$ZHVI
+  ZHVI_MSA$ZHVI[idx] = regiondf$ZHVI
   # Convert to xts object
-  msaxts = xts(msadf$ZHVI,order.by=msadf$Date)
+  regionxts = xts(regiondf$ZHVI,order.by=regiondf$Date)
   # Compute monthly log returns
-  msarets = log(as.numeric(msaxts)) - log(as.numeric(lag(msaxts)))
+  regionrets = log(as.numeric(regionxts)) - log(as.numeric(lag(regionxts)))
   # Convert to annualized percentages and save to full table
-  ZHVI_MSA$AnnGrowth[msaidx] = msarets*12*100
-  # Regress these MSA-level returns on the national returns
-  LinModels_MSA[[i]] = lm(ZHVI_MSA$AnnGrowth[msaidx]~AnnGrowth,data=ZHVI_US)
-  # Add model R-squared to saved regression results list
-  LinModels_MSA[[i]]$r.squared = summary(LinModels_MSA[[i]])$r.squared
+  ZHVI_MSA$AnnGrowth[idx] = regionrets*12*100
+  # Regress the region returns on the national returns
+  regionmdl = lm(ZHVI_MSA$AnnGrowth[idx]~AnnGrowth,data=ZHVI_US)
+  # Add model R-squared to model output
+  regionmdl$r.squared = summary(regionmdl)$r.squared
+  # Save model results to MktModels_MSA list
+  MktModels_MSA[[region]] = regionmdl
   # Extract model residuals to full table
-  ZHVI_MSA$RegResids[msaidx & !is.na(ZHVI_MSA$ZHVI)] = c(NA,LinModels_MSA[[i]]$residuals)
+  ZHVI_MSA$RegResids[idx & !is.na(ZHVI_MSA$AnnGrowth)] = MktModels_MSA[[region]]$residuals
   # Compute 12-month rolling means for smoother year-over-year values
-  ZHVI_MSA$ZHVIRollMean[msaidx] = rollmean(msadf$ZHVI,12,fill=NA,align="right")
-  ZHVI_MSA$AnnGrowthRollMean[msaidx] = rollmean(ZHVI_MSA$AnnGrowth[msaidx],12,fill=NA,align="right")
-  ZHVI_MSA$RegResidsRollMean[msaidx] = rollmean(ZHVI_MSA$RegResids[msaidx],12,fill=NA,align="right")
-  # Stop loop timer and output result
-  T = proc.time() - t
-  print(paste("Iteration", as.character(i), "for", msa, "completed in", as.character(round(T[3],2)), "seconds."))
-  # Increment counter
-  i=i+1
+  ZHVI_MSA$ZHVIRollMean[idx] = rollmean(regiondf$ZHVI,12,fill=NA,align="right")
+  ZHVI_MSA$AnnGrowthRollMean[idx] = rollmean(ZHVI_MSA$AnnGrowth[idx],12,fill=NA,align="right")
+  ZHVI_MSA$RegResidsRollMean[idx] = rollmean(ZHVI_MSA$RegResids[idx],12,fill=NA,align="right")
+  # Stop loop timer and output result (uncomment to use)
+  # T = proc.time() - t
+  # print(paste(region, "completed in", as.character(round(T[3],2)), "seconds."))
 }
+# Stop timer and output result
 loopT = proc.time()-loopt
 print(paste("Full MSA-level Cleaning completed in", as.character(round(loopT[3],2)), "seconds."))
 ```
+
+
+
+```{r}
+summary(ZHVI_MSA$ZHVI)
+summary(ZHVI_MSA$AnnGrowth)
+summary(ZHVI_MSA$RegResids)
+summary(ZHVI_MSA$ZHVIRollMean)
+summary(ZHVI_MSA$AnnGrowthRollMean)
+summary(ZHVI_MSA$RegResidsRollMean)
+summary(MktModels_MSA) |> head()
+```
+
+#### Parallelizing the Loop
+
+Now let's adapt the loop above to run in parallel using the `doParallel` package. This will allow the loop to run on multiple cores, which should speed up the process. The `registerDoParallel()` function is used to register the parallel backend, which will allow the `foreach()` function to run the loop in parallel. The `foreach()` function is used to run the loop in parallel, and the `%dopar%` operator is used to specify that the loop should be run in parallel. The `stopImplicitCluster()` function is used to stop the parallel backend once the loop is finished.
+
+**Currently, this notebook is being compiled on a 12-core/24-thread CPU.**
+
+```{r msaloopparallel}
+# Start timer
+loopt=proc.time()
+# Extract unique region names
+regions = levels(ZHVI_MSA$RegionName)
+# Create list for storing market model results
+#MktModels_MSA = list()
+# Register parallel backend
+cl = makeCluster(detectCores())
+registerDoParallel(cl)
+# Loop through each MSA
+#region = regions[1]
+MktModels_MSA = foreach(region=regions) %dopar% {
+  # Start loop timer (uncomment to use)
+  #t = proc.time()
+  # Load xts package in iteration
+  library(xts)
+  # Identify indices for the region in full data frame
+  idx = ZHVI_MSA$RegionName==region
+  # Extract that subset
+  regiondf = ZHVI_MSA[idx,]
+  # Impute any missing observations in middle of time series
+  # Below uses linear interpolation within observed time range
+  regiondf$ZHVI = approxfun(1:nrow(regiondf),regiondf$ZHVI)(1:nrow(regiondf))
+  # Replace missing with imputed values in main data
+  ZHVI_MSA$ZHVI[idx] = regiondf$ZHVI
+  # Convert to xts object
+  regionxts = xts(regiondf$ZHVI,order.by=regiondf$Date)
+  # Compute monthly log returns
+ regionrets = log(as.numeric(regionxts)) - log(as.numeric(lag(regionxts)))
+  # Convert to annualized percentages and save to full table
+  ZHVI_MSA$AnnGrowth[idx] = regionrets*12*100
+  # Regress the region returns on the national returns
+  regionmdl = lm(ZHVI_MSA$AnnGrowth[idx]~AnnGrowth,data=ZHVI_US)
+  # Add model R-squared to model output
+  regionmdl$r.squared = summary(regionmdl)$r.squared
+  # Save model results to MktModels_MSA list
+  #MktModels_MSA[[region]] = regionmdl
+  # Extract model residuals to full table
+  ZHVI_MSA$RegResids[idx & !is.na(ZHVI_MSA$AnnGrowth)] = regionmdl$residuals
+  # Compute 12-month rolling means for smoother year-over-year values
+  ZHVI_MSA$ZHVIRollMean[idx] = rollmean(regiondf$ZHVI,12,fill=NA,align="right")
+  ZHVI_MSA$AnnGrowthRollMean[idx] = rollmean(ZHVI_MSA$AnnGrowth[idx],12,fill=NA,align="right")
+  ZHVI_MSA$RegResidsRollMean[idx] = rollmean(ZHVI_MSA$RegResids[idx],12,fill=NA,align="right")
+  # Stop loop timer and output result (uncomment to use)
+  # T = proc.time() - t
+  # print(paste(region, "completed in", as.character(round(T[3],2)), "seconds."))
+  regionmdl
+  #invisible() # Invisible return to suppress output
+}
+# Relabel MktModels_MSA elements as region names
+names(MktModels_MSA) = regions
+# Stop parallel backend
+stopImplicitCluster()
+# Stop timer and output result
+loopT = proc.time()-loopt
+print(paste("Parallel MSA-level Cleaning completed in", as.character(round(loopT[3],2)), "seconds."))
+```
+
+
+```{r}
+summary(ZHVI_MSA$ZHVI)
+summary(ZHVI_MSA$AnnGrowth)
+summary(ZHVI_MSA$RegResids)
+summary(ZHVI_MSA$ZHVIRollMean)
+summary(ZHVI_MSA$AnnGrowthRollMean)
+summary(ZHVI_MSA$RegResidsRollMean)
+summary(MktModels_MSA) |> head()
+```
+
+## Market Model Rankings
 
 Let's output the top 6 and bottom 6 metros from the market models for the most recent month:
 
@@ -184,4 +267,12 @@ Then for a longer-term comparison, let's examine the top 6 and bottom 6 of the r
 head(MSAnow[order(-MSAnow$RegResidsRollMean),c(2,3,6,10,11,12)])
 head(MSAnow[order(MSAnow$RegResidsRollMean),c(2,3,6,10,11,12)])
 ```
+
+
+
+
+
+
+
+
 
