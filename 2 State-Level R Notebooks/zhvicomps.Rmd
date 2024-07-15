@@ -1,5 +1,5 @@
 ---
-title: "Zillow House Value Index Comparisons"
+title: "State-Level ZHVI Comparisons"
 output: html_notebook
 ---
 
@@ -17,11 +17,10 @@ library(renv)
 # Use restore() to install any packages listed in the renv.lock file
 renv::restore(clean=TRUE, lockfile="../renv.lock")
 # Load in the packages
-library(readr)
-library(tidyr)
-library(ggplot2)
+library(tidyverse)
+library(fst)
 library(xts)
-library(urbnmapr)
+#library(urbnmapr)
 ```
 
 * The [readr package](https://cran.r-project.org/package=readr) is a common package for reading in data files. After installing, the RStudio Environment tab will have a new option to import data sets that uses this package. It will even generate the R code for you to copy and paste into your script.
@@ -48,21 +47,29 @@ As long as you have downloaded the entire project repository, the renv chunk abo
 
 ```{r setup2, results='hide', message=FALSE, eval=FALSE}
 # Create list of packages needed for this exercise
-list.of.packages = c("devtools","readr","tidyr","ggplot2","xts","rmarkdown")
+list.of.packages = c("devtools","tidyverse","fst","xts","rmarkdown")
 # Check if any have not yet been installed
 new.packages = list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
 # If any need to be installed, install them
 if(length(new.packages)) install.packages(new.packages)
 # Urban Institute Mapping package downloaded via GitHub using devtools
-library(devtools)
-install_github("UrbanInstitute/urbnmapr")
+#library(devtools)
+#install_github("UrbanInstitute/urbnmapr")
 # Load in the packages
-library(readr)
-library(tidyr)
-library(ggplot2)
+library(tidyverse)
+library(fst)
 library(xts)
-library(urbnmapr)
+#library(urbnmapr)
 ```
+
+
+## Import State-Level ZHVI Data
+
+
+
+
+
+
 
 
 ## Data Background
@@ -308,7 +315,7 @@ First, we'll import the mapping data and merge it with the state-level ZHVI data
 
 ```{r statemap}
 # Download map data
-STATESmap = urbnmapr::states
+#STATESmap = urbnmapr::states
 # Merge ZHVI data with map data
 STATESmerge = merge(STATESmap, STATESnow, by.x="state_name", by.y="RegionName")
 # Plot the map
@@ -488,7 +495,7 @@ Now let's map the county-level ZHVI data. To avoid any potential mismatches of m
 
 ```{r countymap}
 # Download map data
-COUNTYmap = urbnmapr::counties
+#COUNTYmap = urbnmapr::counties
 # Create full 5-digit FIPS code for each county
 COUNTYnow$county_fips = paste(as.character(COUNTYnow$StateCodeFIPS), as.character(COUNTYnow$MunicipalCodeFIPS), sep="")
 # Merge ZHVI data with map data

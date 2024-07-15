@@ -1,5 +1,5 @@
 ---
-title: "State-Level ZHVI Data Import and Cleaning"
+title: "ZIP-Code-Level ZHVI Data Import and Cleaning"
 output: html_notebook
 ---
 
@@ -62,7 +62,7 @@ if (!dir.exists(datadir)) dir.create(datadir)
 rawdir = paste(datadir,"Raw/",sep="")
 cleandir = paste(datadir,"Clean/",sep="")
 # Specify url for ZHVI data from website
-zhviurl = "https://files.zillowstatic.com/research/public_csvs/zhvi/State_zhvi_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv"
+zhviurl = "https://files.zillowstatic.com/research/public_csvs/zhvi/Zip_zhvi_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv"
 ```
 
 
@@ -78,7 +78,7 @@ ZHVIraw = read_csv(zhviurl, show_col_types=FALSE)
 
 ### Summarize Raw Data
 
-To summarize the raw data, let's output the dimensions of the data frame and the first few rows of the data frame. The 51 rows correspond with the 50 states + DC, and the many columns represent the monthly time dimension.
+To summarize the raw data, let's output the dimensions of the data frame and the first few rows of the data frame. In this table, each row represents one of roughly 21500 cities in the U.S. Then unlike the msa-level and state-level data, there are some additional columns identifying the geographic regions for each county.
 
 ```{r rawsummary}
 dim(ZHVIraw)
@@ -90,57 +90,89 @@ head(ZHVIraw)
 Now let's save the raw data to a csv file in the raw data folder. This will let you access the original version again without having to re-download from the server. This can be useful for troubleshooting the cleaning process. This version will also be very portable to other analysis software. We'll save the cleaned data in an R-specific format later.
 
 ```{r rawsave}
-write_csv(ZHVIraw, paste0(rawdir,"ZHVI_raw_state.csv"))
+write_csv(ZHVIraw, paste0(rawdir,"ZHVI_raw_zip5.csv"))
 ```
 
 ## Data Cleaning
 
 ### Geographic Variables
 
-The RegionID variable is a unique numeric identifier for each region, and the SizeRank variable is simply a ranking from 1 to N. Let's convert these to integers, since that will be more efficient than a standard numeric format.
+The rows of the raw data correspond to different regions. The first few columns/variables are geographic identifiers. The first five are the same as the msa-level, country-level, and state-level tables. The next three columns are unique to this city-level table.
 
-```{r integers}
-ZHVIraw$RegionID = as.integer(ZHVIraw$RegionID)
-ZHVIraw$SizeRank = as.integer(ZHVIraw$SizeRank)
+* RegionID: Unique numeric identifier for each region
+* SizeRank: Ranking of regions by size
+* RegionName: Name of the region
+  * *City names for this table.*
+* RegionType: Type of region
+  * *All are cities in this table.*
+* StateName: State abbreviation
+* State: State abbreviation again for some reason
+* City: City name
+* Metro: MSA name
+* CountyName: Name of the county
+
+Since we'll similarly be tranforming this data frame into a long panel format, let's convert all of these to factors. Then we'll get rid of unnecessary columns later.
+
+```{r factors}
+ZHVIraw$RegionID = as.factor(ZHVIraw$RegionID)
+ZHVIraw$SizeRank = as.factor(ZHVIraw$SizeRank)
+ZHVIraw$RegionName = as.factor(ZHVIraw$RegionName)
+ZHVIraw$RegionType = as.factor(ZHVIraw$RegionType)
+ZHVIraw$StateName = as.factor(ZHVIraw$StateName)
+ZHVIraw$State = as.factor(ZHVIraw$State)
+ZHVIraw$City = as.factor(ZHVIraw$City)
+ZHVIraw$Metro = as.factor(ZHVIraw$Metro)
+ZHVIraw$CountyName = as.factor(ZHVIraw$CountyName)
 ```
 
-The RegionName variable is a character array with the names of the regions. Since each is unique, we can leave this as is.
+Let's summarize the distribution of cities by state. *All 50 states + DC have more than 20 ZIP codes.*
 
-RegionType simply distinguishes the country-level observation in row 1 from the msa-level observations in the remaining rows. We'll split these into separate data frames later, and then we can just drop the variable.
-
-Next up is StateName, which is actually empty for this state-level data. The state names are already in the RegionName variable, so we can leave this as missing values.
+```{r statefactor}
+table(ZHVIraw$StateName)
+```
 
 Then all of the columns after that are the monthly ZHVI values. Those are already in a numeric format, so we can leave those as is, for now.
 
-### State-Level ZHVI Data
+### Transform to Long Panel Format
 
-The remaining rows in the raw data capture the state-level time series. Similarly, we'll transform this into a long panel format. 
+Now, just as was done for the country-level and msa-level data, we will transform the ZHVI data from the wide panel format to a long panel format. See the [Brave Search's Code LLM Summary](https://search.brave.com/search?q=wide+vs+long+panel+data+format) for more details on these panel data formats.
 
-```{r statecleaning}
-ZHVI_State = pivot_longer(ZHVIraw,
-                        cols=6:ncol(ZHVIraw),
+```{r wide2long}
+ZHVI_ZIP = pivot_longer(ZHVIraw,
+                        cols=10:ncol(ZHVIraw),
                         names_to="Date",
                         values_to="ZHVI")
-# Format long variables (regions as factors, dates as dates)
-ZHVI_State$RegionID = as.factor(ZHVI_State$RegionID)
-ZHVI_State$RegionName = as.factor(ZHVI_State$RegionName)
-ZHVI_State$Date = as.Date(ZHVI_State$Date)
-```
-
-#### Save Clean State Data
-
-Now let's save the cleaned state-level data as an fst file in the cleaned data folder.
-
-```{r msasave}
-write_fst(ZHVI_State, paste0(cleandir,"ZHVI_clean_state.fst"))
+# Format date variable as date)
+ZHVI_ZIP$Date = as.Date(ZHVI_ZIP$Date)
 ```
 
 ### Summary of Cleaned Data
 
-Let's summarize the cleaned data by outputting the dimensions of the data frame and the first few rows of the data frame.
+Let's summarize the cleaned data by outputting the dimensions of the cleaned data frame, summarizing each variable, and displaying the first few rows of the data frame.
 
 ```{r cleansummary}
-dim(ZHVI_State)
-head(ZHVI_State)
+# Dimensions of cleaned, long panel data frame
+dim(ZHVI_ZIP)
+# Summarize each variable in the cleaned data frame
+summary(ZHVI_ZIP)
+# Display the first few rows
+head(ZHVI_ZIP)
+```
+
+### Remove Extra Columns
+
+Now let's drop the additional geographic columns so that we are left with the same variables as the other geography levels.
+
+```{r dropcols}
+ZHVI_ZIP = select(ZHVI_ZIP, -c(State, City, Metro, CountyName))
+```
+
+
+### Save Clean ZHVI Data
+
+Now let's save the cleaned data as an fst file in the cleaned data folder.
+
+```{r cleansave}
+write_fst(ZHVI_ZIP, paste0(cleandir,"ZHVI_clean_zip5.fst"))
 ```
 

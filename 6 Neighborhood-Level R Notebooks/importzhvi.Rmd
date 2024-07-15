@@ -1,5 +1,5 @@
 ---
-title: "Metro-Level ZHVI Data Import and Cleaning"
+title: "Neighborhood-Level ZHVI Data Import and Cleaning"
 output: html_notebook
 ---
 
@@ -19,7 +19,6 @@ renv::restore(clean=TRUE, lockfile="../renv.lock")
 # Load in the packages
 library(tidyverse)
 library(fst)
-library(rmarkdown)
 ```
 
 * The [tidyverse package](https://cran.r-project.org/package=tidyverse)
@@ -42,15 +41,14 @@ As long as you have downloaded the entire project repository, the renv chunk abo
 
 ```{r setup2, results='hide', message=FALSE, eval=FALSE}
 # Create list of packages needed for this exercise
-list.of.packages = c("tidyverse","fst","rmarkdown")
+list.of.packages = c("tidyverse","xts","rmarkdown")
 # Check if any have not yet been installed
 new.packages = list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
 # If any need to be installed, install them
 if(length(new.packages)) install.packages(new.packages)
 # Load in the packages
 library(tidyverse)
-library(fst)
-library(rmarkdown)
+library(xts)
 ```
 
 ### Set Directories and Paths
@@ -58,16 +56,13 @@ library(rmarkdown)
 The code chunk below sets the paths for the data folders and the url for the ZHVI data (from [Zillow Research Data](https://www.zillow.com/research/data/).
 
 ```{r setpaths}
-# Create data folder if it doesn't already exist
+# Specify data folders
 datadir = "../Data/"
 if (!dir.exists(datadir)) dir.create(datadir)
-# Within data folder, create subfolders for raw and cleaned data
 rawdir = paste(datadir,"Raw/",sep="")
-if (!dir.exists(rawdir)) dir.create(rawdir)
 cleandir = paste(datadir,"Clean/",sep="")
-if (!dir.exists(cleandir)) dir.create(cleandir)
 # Specify url for ZHVI data from website
-zhviurl = "https://files.zillowstatic.com/research/public_csvs/zhvi/Metro_zhvi_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv"
+zhviurl = "https://files.zillowstatic.com/research/public_csvs/zhvi/Neighborhood_zhvi_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv"
 ```
 
 
@@ -83,38 +78,40 @@ ZHVIraw = read_csv(zhviurl, show_col_types=FALSE)
 
 ### Summarize Raw Data
 
-To summarize the raw data, let's output the dimensions of the data frame and the first few rows of the data frame. Note that the first observation/row is the national-level ZHVI, and that each row contains an entire monthly time series of numeric ZHVI data. Then the first five columns identify the geographical region, and the remaining columns are the monthly ZHVI values.
+To summarize the raw data, let's output the dimensions of the data frame and the first few rows of the data frame. In this table, each row represents one of roughly 21500 neighborhoods in the U.S. Then unlike the msa-level and state-level data, there are some additional columns identifying the geographic regions for each county.
 
 ```{r rawsummary}
 dim(ZHVIraw)
 head(ZHVIraw)
 ```
 
-The remaining rows after the country-level ZHVI data span most U.S. metropolitan and micropolitan statistical areas (MSAs, for short). The MSA classification is defined by the [Census](https://www.census.gov/programs-surveys/metro-micro/about.html), which indicates that there are 925 total MSAs as of July 2023. The ZHVI data provides fairly good coverage spanning more than 95% of MSAs, 894 as of July 2024. This corresponds with more than 250,000 MSA-month observations.
-
 ### Save Raw Data
 
 Now let's save the raw data to a csv file in the raw data folder. This will let you access the original version again without having to re-download from the server. This can be useful for troubleshooting the cleaning process. This version will also be very portable to other analysis software. We'll save the cleaned data in an R-specific format later.
 
 ```{r rawsave}
-write_csv(ZHVIraw, paste0(rawdir,"ZHVI_raw_msa+country.csv"))
+write_csv(ZHVIraw, paste0(rawdir,"ZHVI_raw_neighborhood.csv"))
 ```
 
 ## Data Cleaning
 
 ### Geographic Variables
 
-The rows of the raw data correspond to different regions. The first few columns/variables are geographic identifiers. These are listed below:
+The rows of the raw data correspond to different regions. The first few columns/variables are geographic identifiers. The first five are the same as the msa-level, country-level, and state-level tables. The next three columns are unique to this city-level table.
 
 * RegionID: Unique numeric identifier for each region
 * SizeRank: Ranking of regions by size
 * RegionName: Name of the region
-  * *MSA names for this table.*
+  * *City names for this table.*
 * RegionType: Type of region
-  * *First row is country-level ZHVI series. Remainder are MSA-level.*
+  * *All are cities in this table.*
 * StateName: State abbreviation
+* State: State abbreviation again for some reason
+* City: City name
+* Metro: MSA name
+* CountyName: Name of the county
 
-The first three variables are unique to each region for this table. However, after we transform the data into a long panel format, there will be many region-month observations for each region. So it will be more efficient to store these variables as factors rather than numeric or character arrays.
+Since we'll similarly be tranforming this data frame into a long panel format, let's convert all of these to factors. Then we'll get rid of unnecessary columns later.
 
 ```{r factors}
 ZHVIraw$RegionID = as.factor(ZHVIraw$RegionID)
@@ -122,9 +119,13 @@ ZHVIraw$SizeRank = as.factor(ZHVIraw$SizeRank)
 ZHVIraw$RegionName = as.factor(ZHVIraw$RegionName)
 ZHVIraw$RegionType = as.factor(ZHVIraw$RegionType)
 ZHVIraw$StateName = as.factor(ZHVIraw$StateName)
+ZHVIraw$State = as.factor(ZHVIraw$State)
+ZHVIraw$City = as.factor(ZHVIraw$City)
+ZHVIraw$Metro = as.factor(ZHVIraw$Metro)
+ZHVIraw$CountyName = as.factor(ZHVIraw$CountyName)
 ```
 
-Let's summarize the distribution of MSAs by state. *Rhode Island is the only state with just one metro. Delaware has two, and several others have four.*
+Let's summarize the distribution of cities by state. *Hawaii has the fewest neighborhoods with just five. Then all other states + DC have at least a dozen neighborhoods.*
 
 ```{r statefactor}
 table(ZHVIraw$StateName)
@@ -132,38 +133,17 @@ table(ZHVIraw$StateName)
 
 Then all of the columns after that are the monthly ZHVI values. Those are already in a numeric format, so we can leave those as is, for now.
 
-### Country-Level ZHVI Data
+### Transform to Long Panel Format
 
-Let's now split off the country-level data from the MSA-level data. At the same time, we'll transform the ZHVI data into a long panel format. Rather than a wide panel format (the two dimensions, region and time, are respectively represented by the rows and columns in the data frame/table), the long format will create a table where each row represents a region-month pair (with all those columns collapsed into two variables, "Date" and "ZHVI". This will make it easier to work with the data in the subsequent analysis. See the [Brave Search's Code LLM Summary](https://search.brave.com/search?q=wide+vs+long+panel+data+format) for more details on these panel data formats.
+Now, just as was done for the country-level and msa-level data, we will transform the ZHVI data from the wide panel format to a long panel format. See the [Brave Search's Code LLM Summary](https://search.brave.com/search?q=wide+vs+long+panel+data+format) for more details on these panel data formats.
 
-```{r countryclean}
-ZHVI_US = pivot_longer(ZHVIraw[1,],
-                       cols=6:ncol(ZHVIraw),
-                       names_to="Date",
-                       values_to="ZHVI")
-# Format date variable as date
-ZHVI_US$Date = as.Date(ZHVI_US$Date)
-```
-
-#### Save Clean Country Data
-
-Now let's save the cleaned country-level data as an fst file in the cleaned data folder.
-
-```{r countrysave}
-write_fst(ZHVI_US, paste0(cleandir,"ZHVI_clean_country.fst"))
-```
-
-### Metro-Level ZHVI Data
-
-The remaining rows in the raw data capture the MSA-level time series. Similarly, we'll transform this into a long panel format. 
-
-```{r msacleaning}
-ZHVI_MSA = pivot_longer(ZHVIraw[-1,],
-                        cols=6:ncol(ZHVIraw),
+```{r wide2long}
+ZHVI_Neighborhood = pivot_longer(ZHVIraw,
+                        cols=10:ncol(ZHVIraw),
                         names_to="Date",
                         values_to="ZHVI")
-# Format date variable as date
-ZHVI_MSA$Date = as.Date(ZHVI_MSA$Date)
+# Format date variable as date)
+ZHVI_Neighborhood$Date = as.Date(ZHVI_Neighborhood$Date)
 ```
 
 ### Summary of Cleaned Data
@@ -172,18 +152,27 @@ Let's summarize the cleaned data by outputting the dimensions of the cleaned dat
 
 ```{r cleansummary}
 # Dimensions of cleaned, long panel data frame
-dim(ZHVI_MSA)
+dim(ZHVI_Neighborhood)
 # Summarize each variable in the cleaned data frame
-summary(ZHVI_MSA)
+summary(ZHVI_Neighborhood)
 # Display the first few rows
-head(ZHVI_MSA)
+head(ZHVI_Neighborhood)
 ```
 
-### Save Clean MSA Data
+### Remove Extra Columns
 
-Now let's save the cleaned MSA-level data as an fst file in the cleaned data folder.
+Now let's drop the additional geographic columns so that we are left with the same variables as the other geography levels.
 
-```{r msasave}
-write_fst(ZHVI_MSA, paste0(cleandir,"ZHVI_clean_msa.fst"))
+```{r dropcols}
+ZHVI_Neighborhood = select(ZHVI_Neighborhood, -c(State, City, Metro, CountyName))
+```
+
+
+### Save Clean ZHVI Data
+
+Now let's save the cleaned data as an fst file in the cleaned data folder.
+
+```{r cleansave}
+write_fst(ZHVI_Neighborhood, paste0(cleandir,"ZHVI_clean_neighborhood.fst"))
 ```
 

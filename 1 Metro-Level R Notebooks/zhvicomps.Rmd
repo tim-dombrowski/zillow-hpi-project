@@ -21,7 +21,7 @@ library(tidyverse)
 library(fst)
 library(doParallel)
 library(xts)
-library(urbnmapr)
+#library(urbnmapr)
 ```
 
 * The [tidyverse package](https://cran.r-project.org/package=tidyverse)
@@ -53,13 +53,13 @@ new.packages = list.of.packages[!(list.of.packages %in% installed.packages()[,"P
 # If any need to be installed, install them
 if(length(new.packages)) install.packages(new.packages)
 # Urban Institute Mapping package downloaded via GitHub using devtools
-library(devtools)
-install_github("UrbanInstitute/urbnmapr")
+#library(devtools)
+#install_github("UrbanInstitute/urbnmapr")
 # Load in the packages
 library(tidyverse)
 library(fst)
 library(xts)
-library(urbnmapr)
+#library(urbnmapr)
 ```
 
 ### Set Directories and Paths
