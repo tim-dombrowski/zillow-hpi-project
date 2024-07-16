@@ -78,7 +78,7 @@ ZHVIraw = read_csv(zhviurl, show_col_types=FALSE)
 
 ### Summarize Raw Data
 
-To summarize the raw data, let's output the dimensions of the data frame and the first few rows of the data frame. In this table, each row represents one of roughly 21500 cities in the U.S. Then unlike the msa-level and state-level data, there are some additional columns identifying the geographic regions for each county.
+To summarize the raw data, let's output the dimensions of the data frame and the first few rows of the data frame. In this table, each row represents one of more than 26,000 five-digit ZIP codes in the U.S. Then unlike the msa-level and state-level data, there are some additional columns identifying the geographic regions for each county.
 
 ```{r rawsummary}
 dim(ZHVIraw)
@@ -102,9 +102,9 @@ The rows of the raw data correspond to different regions. The first few columns/
 * RegionID: Unique numeric identifier for each region
 * SizeRank: Ranking of regions by size
 * RegionName: Name of the region
-  * *City names for this table.*
+  * *Five-digit ZIP codes for this table.*
 * RegionType: Type of region
-  * *All are cities in this table.*
+  * *All are zips in this table.*
 * StateName: State abbreviation
 * State: State abbreviation again for some reason
 * City: City name
@@ -125,7 +125,7 @@ ZHVIraw$Metro = as.factor(ZHVIraw$Metro)
 ZHVIraw$CountyName = as.factor(ZHVIraw$CountyName)
 ```
 
-Let's summarize the distribution of cities by state. *All 50 states + DC have more than 20 ZIP codes.*
+Let's summarize the distribution of ZIP codes by state. *All 50 states + DC have more than 20 ZIP codes.*
 
 ```{r statefactor}
 table(ZHVIraw$StateName)
@@ -142,7 +142,7 @@ ZHVI_ZIP = pivot_longer(ZHVIraw,
                         cols=10:ncol(ZHVIraw),
                         names_to="Date",
                         values_to="ZHVI")
-# Format date variable as date)
+# Format date variable as date
 ZHVI_ZIP$Date = as.Date(ZHVI_ZIP$Date)
 ```
 
@@ -176,3 +176,57 @@ Now let's save the cleaned data as an fst file in the cleaned data folder.
 write_fst(ZHVI_ZIP, paste0(cleandir,"ZHVI_clean_zip5.fst"))
 ```
 
+
+## Three-digit ZIP Codes
+
+In addition to the full five-digit ZIP code geography level, another useful aggregation of this is the three-digit ZIP code regions (ZIP3s). Some financial datasets, such as the [Freddie Mac Single Family Loan-Level Dataset](https://www.freddiemac.com/research/datasets/sf-loanlevel-dataset), only provide geographic precision at the ZIP3 level. So let's create a ZIP3-level ZHVI dataset.
+
+### Create ZIP3 Variable
+
+The first step is to create a new variable that is the first three digits of the ZIP code. This will be the ZIP3 variable.
+
+```{r zip3var}
+ZHVI_ZIP$zip3 = substr(ZHVI_ZIP$RegionName, 1, 3)
+ZHVI_ZIP$zip3 = as.factor(ZHVI_ZIP$zip3)
+```
+
+### Summary of ZIP3s
+
+To better understand the relationship between ZIP3s and ZIP5s, let's tabulate the number of ZIP5s in each ZIP3. Additionally, let's display the ZIP3s that have only 1 or 2 ZIP5s in them.
+
+```{r zip5sbyzip3}
+# Tabulate ZIP5s by ZIP3
+zip5sbyzip3 = as.data.frame(table(ZHVI_ZIP[,c("zip3","RegionName")]))
+# Remove pairs with no observations
+zip5sbyzip3 = zip5sbyzip3[zip5sbyzip3$Freq>0,]
+# Count the number of ZIP5s in each ZIP3
+zip5counts = as.data.frame(table(zip5sbyzip3$zip3))
+# Display list of ZIP3 with only 1 or 2 ZIP5s in it
+zip5sbyzip3[zip5sbyzip3$zip3%in%zip5counts$Var1[zip5counts$Freq<3],]
+```
+
+We can also summarize the distribution of ZIP3s by state. *DC only has 1 residential ZIP3 (200). However, ZIP3s 202-205 are also labeled as DC, but for government properties. Beyond that, Hawaii and Rhode Island only have 2 ZIP3s, and Delaware only has 3. All others have at least 5.*
+
+```{r zip3sbystate}
+# Group by ZIP3 and StateName
+zip3sbystate = as.data.frame(table(ZHVI_ZIP$zip3, ZHVI_ZIP$StateName))
+zip3sbystate = zip3sbystate[zip3sbystate$Freq>0,]
+# Count the number of ZIP3s in each state
+table(zip3sbystate$Var2)
+```
+
+### Aggregate to ZIP3 Level
+
+Now, let's group by ZIP3-Date pairs and compute the mean ZHVI for each ZIP3-Date pair.
+
+```{r zip3wide2long}
+# Aggregate to ZIP3 level and compute mean non-missing ZHVIs for each ZIP3
+ZHVI_ZIP3 = ZHVI_ZIP |> group_by(zip3, Date, StateName) |> summarize(ZHVI=mean(ZHVI, na.rm=TRUE)) |> ungroup()
+```
+
+### Save of ZIP3 Data
+
+```{r zip3data}
+# Save ZIP3 data
+write_fst(ZHVI_ZIP3, paste0(cleandir,"ZHVI_clean_zip3.fst"))
+```
