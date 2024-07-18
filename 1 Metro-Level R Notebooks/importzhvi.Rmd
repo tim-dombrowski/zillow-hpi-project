@@ -55,7 +55,7 @@ library(rmarkdown)
 
 ### Set Directories and Paths
 
-The code chunk below sets the paths for the data folders and the url for the ZHVI data (from [Zillow Research Data](https://www.zillow.com/research/data/).
+The code chunk below sets the paths for the data folders and the url for the ZHVI data (from [Zillow Research Data](https://www.zillow.com/research/data/)).
 
 ```{r setpaths}
 # Create data folder if it doesn't already exist
