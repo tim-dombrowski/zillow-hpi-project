@@ -1,7 +1,7 @@
 # St. Louis Metro Housing Affordability Dashboard
 
 An interactive **R Shiny** dashboard that measures and visualises
-neighbourhood-level housing affordability in the St. Louis, MO-IL metro area.
+ZIP-code-level housing affordability in the St. Louis, MO-IL metro area.
 Home price data is sourced directly from the **Zillow Research ZHVI public CSV
 files** — the same data series used throughout the parent
 [zillow-hpi-project](https://github.com/tim-dombrowski/zillow-hpi-project)
@@ -14,12 +14,12 @@ repository.
 | Feature | Description |
 |---------|-------------|
 | **KPI Cards** | Median ZHVI, estimated monthly housing cost, affordability ratio, and recent price growth — all updated reactively as you change sidebar inputs |
-| **Interactive Map** | Leaflet circle-marker map of St. Louis-area ZIP codes coloured by affordability ratio, ZHVI, or 1-year price growth |
-| **Time-Series Chart** | Line chart of ZHVI over time for selected neighbourhoods or ZIPs |
+| **Interactive Map** | Leaflet choropleth map of St. Louis-area ZIP codes coloured by affordability ratio, ZHVI, or 1-year price growth using ZCTA polygon boundaries |
+| **Time-Series Chart** | Line chart of ZHVI over time for selected ZIP codes |
 | **Affordability Ratio Chart** | Time-series view of the housing-cost-to-income ratio, with the 30 % HUD threshold line |
-| **Rankings** | Top-15 most and least affordable neighbourhoods (bar charts) |
+| **Rankings** | Top-15 most and least affordable ZIP codes (bar charts) |
 | **Scatter Plots** | Price level vs. affordability ratio; 1-year growth vs. affordability ratio |
-| **Data Table** | Sortable, filterable table of all neighbourhoods with full financial breakdown |
+| **Data Table** | Sortable, filterable table of all ZIP codes with full financial breakdown |
 | **Scenario Analysis** | Violin plot (current vs. baseline), monthly cost waterfall, and sensitivity curve of affordability ratio vs. mortgage rate |
 
 ---
@@ -36,8 +36,7 @@ https://files.zillowstatic.com/research/public_csvs/zhvi/
 
 | Geography | URL Suffix | Usage |
 |-----------|------------|-------|
-| **Neighbourhood** | `Neighborhood_zhvi_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv` | Primary — analysis, charts, table |
-| **ZIP5** | `Zip_zhvi_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv` | Map layer (ZIP polygons available) |
+| **ZIP5** | `Zip_zhvi_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv` | Primary — all analysis, charts, table, and map |
 
 **Series specification:**
 - All Homes (Single-Family Residential + Condo/Co-op)
@@ -53,25 +52,23 @@ automatically refreshed every 7 days.
 
 ## Geography
 
-### Primary: Neighbourhood Level
+### Primary: ZIP5 Level
 
-The Zillow Neighbourhood dataset contains ~21,500 neighbourhoods across the
-United States. The app filters to **`Metro == "St. Louis, MO-IL"`**, which
-yields approximately 60–90 Zillow-defined neighbourhoods spanning the Missouri
-and Illinois sides of the metro area.
+The Zillow ZIP5 dataset contains data for more than 26,000 five-digit ZIP codes
+across the United States. The app filters to **`Metro == "St. Louis, MO-IL"`**,
+yielding approximately 80–120 ZIP codes spanning the Missouri and Illinois sides
+of the metro area.
 
 This geography is used for all affordability analysis, rankings, time-series
-charts, and the data table.
+charts, the data table, and the choropleth map.
 
-### Map Layer: ZIP5 Level
+### Map Layer: ZCTA Polygon Shapefiles
 
-Zillow neighbourhood boundaries are not publicly distributed as polygon
-shapefiles, so the choropleth map falls back to **ZIP code level**. If the
-optional `tigris` and `sf` packages are installed, the app downloads ZIP Code
-Tabulation Area (ZCTA) boundaries from the US Census Bureau and renders
-coloured circle markers at each ZIP centroid. Without those packages, the
-Leaflet map shows a brief explanatory note; all other tabs still function fully
-using neighbourhood data.
+The choropleth map uses **ZIP Code Tabulation Area (ZCTA) polygon boundaries**
+from the US Census Bureau, downloaded via the `tigris` package. Each ZIP code is
+rendered as a filled polygon coloured by the selected variable (affordability
+ratio, ZHVI, or 1-year price growth). Without `tigris` and `sf`, the Leaflet map
+shows a brief explanatory note; all other tabs still function fully.
 
 ---
 
@@ -141,7 +138,7 @@ and reuses the following patterns from that codebase:
 | `read_csv()` for download | All import notebooks | `load_zhvi_cached()` in `data_prep.R` |
 | `pivot_longer()` wide-to-long reshape | All import notebooks | `clean_zhvi_wide_to_long()` in `data_prep.R` |
 | Factor conversion of geographic IDs | All import notebooks | Same in `data_prep.R` |
-| `Metro == "St. Louis, MO-IL"` filter | Described in parent README | Applied in `load_stl_*_data()` |
+| `Metro == "St. Louis, MO-IL"` filter | Described in parent README | Applied in `load_stl_zip_data()` |
 | Blue–white–red `scale_fill_gradient2` colour scheme | `2 State-Level/zhvicomps.Rmd` | Mapped to leaflet and plotly palettes |
 | Log-return / annualised growth calculations | `1 Metro-Level/zhvicomps.Rmd` | Simplified into `compute_price_growth()` |
 
@@ -164,7 +161,7 @@ install.packages(c(
   "RColorBrewer"
 ))
 
-# Optional — enables ZIP polygon choropleth map
+# Recommended — enables ZIP code polygon choropleth map
 install.packages(c("tigris", "sf"))
 ```
 
@@ -180,8 +177,8 @@ Or open `Shiny Dashboard/app.R` in RStudio and click **Run App**.
 
 ### 3. First launch
 
-On first start the app downloads two Zillow CSVs (~20–40 MB total) and caches
-them in `Shiny Dashboard/cache/`. Subsequent starts load from cache (refreshed
+On first start the app downloads the Zillow ZIP5 CSV (~20 MB) and caches
+it in `Shiny Dashboard/cache/`. Subsequent starts load from cache (refreshed
 every 7 days). An internet connection is required for the initial download.
 
 ---
@@ -199,8 +196,8 @@ every 7 days). An internet connection is required for the initial download.
 | `tidyverse` | Data download, cleaning, reshaping, ggplot2 |
 | `scales` | Dollar and percent label formatting |
 | `RColorBrewer` | Colour palettes |
-| `tigris` *(optional)* | US Census ZIP/ZCTA boundary shapefiles |
-| `sf` *(optional)* | Spatial data operations (centroids, joins) |
+| `tigris` *(recommended)* | US Census ZIP/ZCTA boundary shapefiles |
+| `sf` *(recommended)* | Spatial data operations (polygon joins) |
 
 ---
 
@@ -222,16 +219,16 @@ Shiny Dashboard/
 - **ZHVI is not a transaction price.** It is a model-smoothed estimate of the
   typical home value for the middle price tier. Actual purchase prices may
   differ.
-- **Neighbourhood definitions are Zillow's own** and do not correspond to
-  official Census-defined places or neighbourhoods.
+- **ZIP code coverage varies.** Not all ZIP codes in the St. Louis metro have
+  Zillow ZHVI data due to limited transaction volume in some areas.
 - **No income data are fetched automatically.** Affordability is scenario-based
   using the household income entered in the sidebar. Replace the default with
   local or area median income (AMI) data from ACS or HUD for more grounded
   analysis.
 - **Property tax and insurance rates are metro-wide assumptions**, not parcel-
   level estimates. Local rates vary by municipality.
-- **The map uses ZIP-level data**, not neighbourhood polygons, because Zillow
-  does not distribute neighbourhood boundary shapefiles.
+- **ZCTA boundaries are Census-defined** and may not perfectly align with USPS
+  ZIP code service areas.
 
 ---
 

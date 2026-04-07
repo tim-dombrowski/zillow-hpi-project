@@ -3,15 +3,14 @@
 # =============================================================================
 #
 # Overview:
-#   Interactive Shiny dashboard that visualises neighborhood-level housing
-#   affordability in the St. Louis, MO-IL metro area.  Home price data comes
-#   directly from the Zillow Research ZHVI public CSV files.
+#   Interactive Shiny dashboard that visualises ZIP5-level housing affordability
+#   in the St. Louis, MO-IL metro area.  Home price data comes directly from
+#   the Zillow Research ZHVI public CSV files.
 #
 # Data:
-#   PRIMARY  -- Neighborhood-level ZHVI (Zillow ~21,500 U.S. neighborhoods)
-#               filtered to Metro == "St. Louis, MO-IL"
-#   MAP      -- ZIP5-level ZHVI with leaflet circle-marker map
-#               (ZIP polygon boundaries rendered via tigris/sf if available)
+#   PRIMARY  -- ZIP5-level ZHVI filtered to Metro == "St. Louis, MO-IL"
+#               Used for all analysis, charts, tables, and the choropleth map.
+#               ZCTA polygon boundaries rendered via tigris/sf (recommended).
 #
 # Affordability model:
 #   All parameters are user-controlled via the sidebar.
@@ -26,7 +25,7 @@
 #   shiny, shinydashboard, shinycssloaders, plotly, leaflet, DT,
 #   tidyverse, scales, RColorBrewer
 #
-#   Optional (for polygon choropleth map):
+#   Recommended (for polygon choropleth map):
 #     tigris, sf
 #
 # Run locally:
@@ -47,7 +46,7 @@ suppressPackageStartupMessages({
   library(RColorBrewer)
 })
 
-# tigris / sf are optional; used only for ZIP polygon choropleth
+# tigris / sf are recommended; used for ZIP polygon choropleth map
 HAS_TIGRIS = requireNamespace("tigris",   quietly = TRUE) &&
              requireNamespace("sf",       quietly = TRUE)
 
@@ -113,19 +112,10 @@ ui = dashboardPage(
     tags$div(style = "padding: 8px 15px; font-size: 11px; color: #aaa;",
              "Geography"),
 
-    # Geography type selector
-    selectInput(
-      inputId  = "geo_type",
-      label    = NULL,
-      choices  = c("Neighborhood" = "neighborhood",
-                   "ZIP Code"     = "zip"),
-      selected = "neighborhood"
-    ),
-
     # Region multi-select (populated reactively)
     selectizeInput(
       inputId  = "selected_regions",
-      label    = "Select Neighborhoods / ZIPs",
+      label    = "Select ZIP Codes",
       choices  = NULL,
       multiple = TRUE,
       options  = list(placeholder = "All (or choose specific)")
@@ -203,7 +193,7 @@ ui = dashboardPage(
       tabItem(tabName = "overview",
 
         fluidRow(
-          valueBoxOutput("kpi_neighborhoods", width = 2),
+          valueBoxOutput("kpi_zip_codes", width = 2),
           valueBoxOutput("kpi_median_zhvi",   width = 2),
           valueBoxOutput("kpi_monthly_cost",  width = 3),
           valueBoxOutput("kpi_afford_ratio",  width = 2),
@@ -227,8 +217,8 @@ ui = dashboardPage(
             tags$p(class = "info-note",
               "Map shows the latest available ZHVI snapshot coloured by ",
               "affordability ratio (monthly housing cost / monthly income). ",
-              "Circles are sized by home value. ZIP-level data used for mapping; ",
-              "neighborhood-level data used for all other views."
+              "ZIP code polygon boundaries are sourced from the US Census ",
+              "Bureau via the tigris package."
             ),
             radioButtons("map_color_var", "Colour circles by:",
                          choices = c(
@@ -248,7 +238,7 @@ ui = dashboardPage(
 
         fluidRow(
           box(
-            title  = "ZHVI Over Time — Selected Neighborhoods",
+            title  = "ZHVI Over Time — Selected ZIP Codes",
             status = "primary", solidHeader = TRUE,
             width  = 12,
             plotlyOutput("ts_plot", height = "450px") |>
@@ -273,14 +263,14 @@ ui = dashboardPage(
 
         fluidRow(
           box(
-            title  = "Most Affordable Neighborhoods (Current)",
+            title  = "Most Affordable ZIP Codes (Current)",
             status = "success", solidHeader = TRUE,
             width  = 6,
             plotlyOutput("bar_affordable", height = "400px") |>
               withSpinner(color = "#3498db")
           ),
           box(
-            title  = "Least Affordable Neighborhoods (Current)",
+            title  = "Least Affordable ZIP Codes (Current)",
             status = "danger", solidHeader = TRUE,
             width  = 6,
             plotlyOutput("bar_unaffordable", height = "400px") |>
@@ -312,7 +302,7 @@ ui = dashboardPage(
       tabItem(tabName = "table",
         fluidRow(
           box(
-            title  = "Neighborhood / ZIP Summary Table",
+            title  = "ZIP Code Summary Table",
             status = "primary", solidHeader = TRUE,
             width  = 12,
             DTOutput("summary_table") |>
@@ -353,7 +343,7 @@ ui = dashboardPage(
               withSpinner(color = "#3498db")
           ),
           box(
-            title  = "Monthly Cost Breakdown (Median Neighborhood)",
+            title  = "Monthly Cost Breakdown (Median ZIP Code)",
             status = "warning", solidHeader = TRUE,
             width  = 6,
             plotlyOutput("scenario_waterfall", height = "380px") |>
@@ -397,20 +387,16 @@ ui = dashboardPage(
 server = function(input, output, session) {
 
   # --------------------------------------------------------------------------
-  # Load data reactively based on geo_type selector
+  # Load ZIP5 data
   # --------------------------------------------------------------------------
   raw_long = reactive({
-    if (input$geo_type == "neighborhood") {
-      df = load_stl_neighborhood_data(CACHE_DIR)
-    } else {
-      df = load_stl_zip_data(CACHE_DIR)
-    }
+    df = load_stl_zip_data(CACHE_DIR)
     validate(need(nrow(df) > 0,
-      "No data available. Check your internet connection or try the ZIP geography."))
+      "No data available. Check your internet connection and try again."))
     df
   })
 
-  # Update region selector choices when geo_type or data changes
+  # Update region selector choices when data changes
   observeEvent(raw_long(), {
     df = raw_long()
     regions = sort(unique(df$RegionName))
@@ -466,9 +452,9 @@ server = function(input, output, session) {
   # --------------------------------------------------------------------------
   # KPI VALUE BOXES
   # --------------------------------------------------------------------------
-  output$kpi_neighborhoods = renderValueBox({
+  output$kpi_zip_codes = renderValueBox({
     n = dplyr::n_distinct(summary_df()$RegionName)
-    valueBox(n, "Neighborhoods in View", icon = icon("map-marker"),
+    valueBox(n, "ZIP Codes in View", icon = icon("map-marker"),
              color = "blue")
   })
 
@@ -499,30 +485,12 @@ server = function(input, output, session) {
   })
 
   # --------------------------------------------------------------------------
-  # LEAFLET MAP  (ZIP-level or neighborhood point map)
+  # LEAFLET MAP  (ZIP5 choropleth using ZCTA polygon boundaries from tigris)
   # --------------------------------------------------------------------------
-
-  # For the map we always use ZIP-level data (has geographic identifiers
-  # amenable to centering; neighborhoods don't have lat/lon in Zillow data).
-  # We represent each geography as a circle marker positioned at the
-  # centroid of the ZIP or approximate neighborhood location.
-
-  zip_map_df = reactive({
-    # Always download ZIP data for the map regardless of geo_type selection
-    df     = load_stl_zip_data(CACHE_DIR)
-    params = afford_params()
-    ref    = as.Date(input$ref_date)
-    snap   = prepare_summary_data(df, ref, params)
-
-    # Approximate ZIP code centroids for St. Louis metro area
-    # (A full lookup table would normally be loaded from census; we use a
-    #  curated inline reference for the ~120 ZIPs in the STL metro.)
-    snap
-  })
 
   # Build leaflet map
   output$map_leaflet = renderLeaflet({
-    df_snap = zip_map_df()
+    df_snap = summary_df()
 
     color_var = input$map_color_var
 
@@ -533,7 +501,6 @@ server = function(input, output, session) {
                           domain  = pal_domain, na.color = "#aaa")
       color_vals  = df_snap$afford_ratio
       legend_title = "Affordability<br>Ratio"
-      fmt_fn = function(x) paste0(round(x * 100, 1), "%")
 
     } else if (color_var == "ZHVI") {
       pal_domain = range(df_snap$ZHVI, na.rm = TRUE)
@@ -541,7 +508,6 @@ server = function(input, output, session) {
                           domain  = pal_domain, na.color = "#aaa")
       color_vals  = df_snap$ZHVI
       legend_title = "ZHVI ($)"
-      fmt_fn = function(x) paste0("$", formatC(x, format = "f", digits = 0, big.mark = ","))
 
     } else {
       pal_domain = range(df_snap$growth_1y, na.rm = TRUE)
@@ -549,40 +515,31 @@ server = function(input, output, session) {
                           domain  = pal_domain, na.color = "#aaa")
       color_vals  = df_snap$growth_1y
       legend_title = "1-Year<br>Growth"
-      fmt_fn = function(x) paste0(round(x * 100, 1), "%")
     }
 
-    # Build popup text
+    # Build popup text (named by RegionName for easy lookup)
     popup_txt = with(df_snap, paste0(
-      "<b>", RegionName, "</b><br>",
+      "<b>ZIP: ", RegionName, "</b><br>",
       "ZHVI: ", dollar_fmt(ZHVI), "<br>",
       "Monthly Cost: ", dollar_fmt(monthly_total_cost), "<br>",
       "Afford. Ratio: ", pct_fmt(afford_ratio), "<br>",
       "1-yr Growth: ",  pct_fmt(growth_1y), "<br>",
       "Status: <b>", afford_label, "</b>"
     ))
+    names(popup_txt) = df_snap$RegionName
 
-    # Attempt to get lat/lon from tigris ZCTA centroids (optional)
-    # If tigris is unavailable, we skip the map and show a placeholder
+    # Attempt to get ZCTA polygon boundaries from tigris
     map_data = tryCatch({
-      if (HAS_TIGRIS && input$geo_type == "zip") {
-        # Get all Missouri + Illinois ZCTAs and filter to STL ZIPs
+      if (HAS_TIGRIS) {
         stl_zips = unique(df_snap$RegionName)
         zctas_mo = tigris::zctas(state = "MO", year = 2020, cb = TRUE)
         zctas_il = tigris::zctas(state = "IL", year = 2020, cb = TRUE)
         zctas    = rbind(zctas_mo, zctas_il)
         zctas    = zctas[zctas$ZCTA5CE20 %in% stl_zips, ]
 
-        # Compute centroids
-        centroids  = sf::st_centroid(sf::st_geometry(zctas))
-        coords     = sf::st_coordinates(centroids)
-        zcta_df    = data.frame(
-          RegionName = zctas$ZCTA5CE20,
-          lng = coords[, 1],
-          lat = coords[, 2],
-          stringsAsFactors = FALSE
-        )
-        df_snap |> left_join(zcta_df, by = "RegionName")
+        # Join ZHVI summary data into the sf object
+        zctas = dplyr::left_join(zctas, df_snap, by = c("ZCTA5CE20" = "RegionName"))
+        zctas
       } else {
         NULL
       }
@@ -594,26 +551,28 @@ server = function(input, output, session) {
                attribution  = "© OpenStreetMap © CARTO") |>
       setView(lng = -90.1994, lat = 38.6270, zoom = 10)
 
-    if (!is.null(map_data) && nrow(map_data) > 0 && !all(is.na(map_data$lat))) {
-      # Circle marker map
-      valid = map_data[!is.na(map_data$lat) & !is.na(map_data$lng), ]
-      if (nrow(valid) > 0) {
-        size_vals = scales::rescale(valid$ZHVI, to = c(8, 30))
-        m = m |>
-          addCircleMarkers(
-            data        = valid,
-            lng         = ~lng, lat = ~lat,
-            radius      = size_vals,
-            color       = "#333",
-            weight      = 0.5,
-            fillColor   = pal(color_vals[match(valid$RegionName, df_snap$RegionName)]),
-            fillOpacity = 0.8,
-            popup       = popup_txt[match(valid$RegionName, df_snap$RegionName)]
-          ) |>
-          addLegend("bottomright", pal = pal, values = color_vals,
-                    title = legend_title, labFormat = labelFormat(transform = identity),
-                    opacity = 0.8)
-      }
+    if (!is.null(map_data) && nrow(map_data) > 0) {
+      fill_colors = pal(map_data[[color_var]])
+      pop_txt     = popup_txt[map_data$ZCTA5CE20]
+
+      m = m |>
+        addPolygons(
+          data        = map_data,
+          fillColor   = fill_colors,
+          fillOpacity = 0.7,
+          color       = "#555",
+          weight      = 0.8,
+          popup       = pop_txt,
+          highlight   = highlightOptions(
+            weight      = 2,
+            color       = "#222",
+            fillOpacity = 0.9,
+            bringToFront = TRUE
+          ),
+          label       = ~ZCTA5CE20
+        ) |>
+        addLegend("bottomright", pal = pal, values = color_vals,
+                  title = legend_title, opacity = 0.8)
     } else {
       # Fallback: show text note on map
       m = m |>
@@ -621,11 +580,9 @@ server = function(input, output, session) {
           html = paste0(
             "<div style='background:white;padding:10px;border-radius:5px;",
             "font-size:12px;max-width:300px;'>",
-            "<b>Map note:</b> Precise geographic coordinates are not available ",
-            "for Zillow neighborhoods. Install the <code>tigris</code> and ",
-            "<code>sf</code> packages and select ZIP geography to enable the ",
-            "choropleth/circle map. The other dashboard tabs work with ",
-            "neighborhood-level data regardless.",
+            "<b>Map note:</b> Install the <code>tigris</code> and ",
+            "<code>sf</code> packages to enable the ZIP code choropleth map. ",
+            "All other dashboard tabs function without these packages.",
             "</div>"
           ),
           position = "topright"
@@ -677,7 +634,7 @@ server = function(input, output, session) {
                                      "Date: %{x|%b %Y}<br>",
                                      "ZHVI: $%{y:,.0f}<extra></extra>")) |>
       layout(
-        title  = list(text = paste0("ZHVI Over Time — St. Louis Metro", note),
+        title  = list(text = paste0("ZHVI Over Time — St. Louis Metro (ZIP Code)", note),
                       font = list(size = 14)),
         xaxis  = list(title = ""),
         yaxis  = list(title = "Zillow Home Value Index ($)",
@@ -828,7 +785,7 @@ server = function(input, output, session) {
   output$summary_table = renderDT({
     df = summary_df() |>
       transmute(
-        Neighborhood    = RegionName,
+        `ZIP Code`      = RegionName,
         State           = StateName,
         `ZHVI ($)`      = round(ZHVI, 0),
         `Monthly Mort.` = round(monthly_mortgage, 0),
@@ -894,7 +851,7 @@ server = function(input, output, session) {
       )
   })
 
-  # Waterfall: cost components for median neighborhood
+  # Waterfall: cost components for median ZIP code
   output$scenario_waterfall = renderPlotly({
     params = afford_params()
     df     = summary_df()

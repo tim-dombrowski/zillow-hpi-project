@@ -2,15 +2,11 @@
 # data_prep.R
 # Downloads and prepares Zillow ZHVI data for the St. Louis metro area.
 #
-# Geography strategy:
-#   PRIMARY  -- Neighborhood-level ZHVI (Zillow ~21,500 U.S. neighborhoods).
+# Geography:
+#   PRIMARY  -- ZIP5-level ZHVI (five-digit ZIP code areas).
 #               Filtered to Metro == "St. Louis, MO-IL".
-#               Used for all affordability analysis, rankings, charts, tables.
-#
-#   FALLBACK -- ZIP5-level ZHVI if neighborhood coverage is too sparse.
-#               Also filtered to Metro == "St. Louis, MO-IL".
-#               Used as the choropleth map layer (ZIP codes have polygon
-#               boundaries via the tigris / zcta shapefiles).
+#               Used for all affordability analysis, rankings, charts, tables,
+#               and the choropleth map (ZCTA polygon boundaries from tigris).
 #
 # NOTE: The Data/ folder is git-ignored in the parent repo.  This script
 #       caches downloaded CSV files in a local cache/ subfolder so that
@@ -23,8 +19,6 @@ library(tidyverse)
 ZILLOW_BASE = "https://files.zillowstatic.com/research/public_csvs/zhvi/"
 
 # ---- ZHVI series: All Homes (SFR + Condo), middle tier, smoothed, SA, monthly
-NEIGHBORHOOD_URL = paste0(ZILLOW_BASE,
-  "Neighborhood_zhvi_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv")
 ZIP5_URL = paste0(ZILLOW_BASE,
   "Zip_zhvi_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv")
 
@@ -120,48 +114,16 @@ clean_zhvi_wide_to_long = function(df_wide, extra_keep_cols = character(0)) {
 
 
 # =============================================================================
-# load_stl_neighborhood_data()
-# Loads and returns tidy neighborhood-level ZHVI data for the St. Louis metro.
+# load_stl_zip_data()
+# Loads and returns tidy ZIP5-level ZHVI data for the St. Louis metro.
+# RegionName is a 5-digit ZIP code string.
+#
+# Used as the primary data source for all affordability analysis, charts,
+# tables, and the choropleth map (ZCTA polygon boundaries from tigris).
 #
 # Returns: data frame with columns:
 #   RegionID, SizeRank, RegionName, RegionType, StateName,
 #   State, Metro, City, CountyName, Date, ZHVI
-# =============================================================================
-load_stl_neighborhood_data = function(cache_dir) {
-  raw = load_zhvi_cached(
-    url        = NEIGHBORHOOD_URL,
-    cache_name = "neighborhood_raw.csv",
-    cache_dir  = cache_dir
-  )
-
-  # Filter to St. Louis metro BEFORE pivoting (much faster on large dataset)
-  if ("Metro" %in% names(raw)) {
-    raw = raw[!is.na(raw$Metro) & raw$Metro == STL_METRO, ]
-  }
-
-  if (nrow(raw) == 0) {
-    warning("No neighborhood rows found for '", STL_METRO,
-            "'. Returning empty data frame.")
-    return(data.frame())
-  }
-
-  long = clean_zhvi_wide_to_long(raw)
-
-  message("Neighborhood data loaded: ", dplyr::n_distinct(long$RegionName),
-          " neighborhoods, ", dplyr::n_distinct(long$Date), " months.")
-
-  return(long)
-}
-
-
-# =============================================================================
-# load_stl_zip_data()
-# Loads and returns tidy ZIP5-level ZHVI data for the St. Louis metro.
-# Used as fallback for the choropleth map (ZIP polygons are available via
-# the tigris package).
-#
-# Returns: data frame with same column structure as neighborhood data but
-#          RegionName is a 5-digit ZIP code string.
 # =============================================================================
 load_stl_zip_data = function(cache_dir) {
   raw = load_zhvi_cached(
@@ -196,7 +158,7 @@ load_stl_zip_data = function(cache_dir) {
 
 # =============================================================================
 # prepare_summary_data()
-# Creates a cross-sectional summary data frame (one row per neighborhood/ZIP)
+# Creates a cross-sectional summary data frame (one row per ZIP code)
 # for a given reference date, with affordability metrics appended.
 #
 # Arguments:
