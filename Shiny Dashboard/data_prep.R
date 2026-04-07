@@ -1,10 +1,10 @@
 # =============================================================================
 # data_prep.R
-# Downloads and prepares Zillow ZHVI data for the St. Louis metro area.
+# Downloads and prepares Zillow ZHVI data for any US metro area.
 #
 # Geography:
 #   PRIMARY  -- ZIP5-level ZHVI (five-digit ZIP code areas).
-#               Filtered to Metro == "St. Louis, MO-IL".
+#               Filtered to a user-selected Metro value from the Zillow data.
 #               Used for all affordability analysis, rankings, charts, tables,
 #               and the choropleth map (ZCTA polygon boundaries from tigris).
 #
@@ -114,15 +114,41 @@ clean_zhvi_wide_to_long = function(df_wide, extra_keep_cols = character(0)) {
 
 
 # =============================================================================
-# load_stl_zip_data()
-# Loads and returns tidy ZIP5-level ZHVI data for the St. Louis metro.
+# list_available_metros()
+# Returns a sorted character vector of all metro area names present in the
+# Zillow ZIP5 dataset.  Uses the same cached CSV as the data-loading functions.
+#
+# Arguments:
+#   cache_dir -- path to cache directory
+#
+# Returns: sorted character vector of metro names
+# =============================================================================
+list_available_metros = function(cache_dir) {
+  raw = load_zhvi_cached(
+    url        = ZIP5_URL,
+    cache_name = "zip5_raw.csv",
+    cache_dir  = cache_dir
+  )
+  if (!"Metro" %in% names(raw)) return(character(0))
+  sort(unique(raw$Metro[!is.na(raw$Metro)]))
+}
+
+
+# =============================================================================
+# load_metro_zip_data()
+# Loads and returns tidy ZIP5-level ZHVI data for any US metro area.
 # RegionName is a 5-digit ZIP code string.
+#
+# Arguments:
+#   metro     -- metro area name string matching the Metro column in Zillow data
+#                (e.g. "St. Louis, MO-IL", "Chicago, IL", "Denver, CO")
+#   cache_dir -- path to cache directory
 #
 # Returns: data frame with columns:
 #   RegionID, SizeRank, RegionName, RegionType, StateName,
 #   State, Metro, City, CountyName, Date, ZHVI
 # =============================================================================
-load_stl_zip_data = function(cache_dir) {
+load_metro_zip_data = function(metro, cache_dir) {
   raw = load_zhvi_cached(
     url        = ZIP5_URL,
     cache_name = "zip5_raw.csv",
@@ -130,17 +156,17 @@ load_stl_zip_data = function(cache_dir) {
   )
 
   if ("Metro" %in% names(raw)) {
-    raw_stl = raw[!is.na(raw$Metro) & raw$Metro == STL_METRO, ]
+    raw_metro = raw[!is.na(raw$Metro) & raw$Metro == metro, ]
   } else {
-    raw_stl = raw
+    raw_metro = raw
   }
 
-  if (nrow(raw_stl) == 0) {
-    warning("No ZIP rows found for '", STL_METRO, "'.")
+  if (nrow(raw_metro) == 0) {
+    warning("No ZIP rows found for '", metro, "'.")
     return(data.frame())
   }
 
-  long = clean_zhvi_wide_to_long(raw_stl)
+  long = clean_zhvi_wide_to_long(raw_metro)
 
   # Pad ZIP codes to 5 characters (preserve leading zeros)
   long$RegionName = formatC(as.integer(long$RegionName), width = 5,
@@ -150,6 +176,16 @@ load_stl_zip_data = function(cache_dir) {
           " ZIP codes, ", dplyr::n_distinct(long$Date), " months.")
 
   return(long)
+}
+
+
+# =============================================================================
+# load_stl_zip_data()
+# Convenience wrapper: loads ZIP5 data for the default St. Louis metro area.
+# Calls load_metro_zip_data() with STL_METRO as the metro argument.
+# =============================================================================
+load_stl_zip_data = function(cache_dir) {
+  load_metro_zip_data(STL_METRO, cache_dir)
 }
 
 

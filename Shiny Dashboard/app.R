@@ -1,14 +1,14 @@
 # =============================================================================
-# app.R  --  St. Louis Metro Housing Affordability Dashboard
+# app.R  --  Metro Housing Affordability Dashboard
 # =============================================================================
 #
 # Overview:
 #   Interactive Shiny dashboard that visualises ZIP5-level housing affordability
-#   in the St. Louis, MO-IL metro area.  Home price data comes directly from
-#   the Zillow Research ZHVI public CSV files.
+#   for any US metro area in the Zillow ZHVI dataset.  Home price data comes
+#   directly from the Zillow Research ZHVI public CSV files.
 #
 # Data:
-#   PRIMARY  -- ZIP5-level ZHVI filtered to Metro == "St. Louis, MO-IL"
+#   PRIMARY  -- ZIP5-level ZHVI filtered to user-selected Metro
 #               Used for all analysis, charts, tables, and the choropleth map.
 #               ZCTA polygon boundaries rendered via tigris/sf (recommended).
 #
@@ -68,6 +68,15 @@ source(file.path(APP_DIR, "data_prep.R"))
 CACHE_DIR = file.path(APP_DIR, "cache")
 if (!dir.exists(CACHE_DIR)) dir.create(CACHE_DIR, recursive = TRUE)
 
+# ---- Available metro areas (loaded once at startup) -------------------------
+METRO_CHOICES = tryCatch(
+  list_available_metros(CACHE_DIR),
+  error = function(e) {
+    message("Could not load metro list: ", e$message)
+    character(0)
+  }
+)
+
 # ---- Default sidebar values --------------------------------------------------
 DEFAULT = list(
   down_pct        = 20,
@@ -93,7 +102,7 @@ ui = dashboardPage(
   skin = "blue",
 
   dashboardHeader(
-    title = "STL Housing Affordability"
+    title = "Metro Housing Affordability"
   ),
 
   # ---- Sidebar ---------------------------------------------------------------
@@ -106,6 +115,20 @@ ui = dashboardPage(
       menuItem("Data Table",         tabName = "table",      icon = icon("table")),
       menuItem("Scenario Analysis",  tabName = "scenario",   icon = icon("sliders-h")),
       menuItem("About",              tabName = "about",      icon = icon("info-circle"))
+    ),
+
+    hr(),
+    tags$div(style = "padding: 8px 15px; font-size: 11px; color: #aaa;",
+             "Metro Area"),
+
+    selectizeInput(
+      inputId  = "selected_metro",
+      label    = NULL,
+      choices  = METRO_CHOICES,
+      selected = if (length(METRO_CHOICES) > 0 && STL_METRO %in% METRO_CHOICES)
+                   STL_METRO else METRO_CHOICES[1],
+      multiple = FALSE,
+      options  = list(placeholder = "Select a metro area...")
     ),
 
     hr(),
@@ -387,10 +410,11 @@ ui = dashboardPage(
 server = function(input, output, session) {
 
   # --------------------------------------------------------------------------
-  # Load ZIP5 data
+  # Load ZIP5 data for the selected metro
   # --------------------------------------------------------------------------
   raw_long = reactive({
-    df = load_stl_zip_data(CACHE_DIR)
+    req(input$selected_metro)
+    df = load_metro_zip_data(input$selected_metro, CACHE_DIR)
     validate(need(nrow(df) > 0,
       "No data available. Check your internet connection and try again."))
     df
@@ -499,21 +523,18 @@ server = function(input, output, session) {
       pal_domain = range(df_snap$afford_ratio, na.rm = TRUE)
       pal = colorNumeric(palette = c("#2ca02c", "#ff7f0e", "#d62728"),
                           domain  = pal_domain, na.color = "#aaa")
-      color_vals  = df_snap$afford_ratio
       legend_title = "Affordability<br>Ratio"
 
     } else if (color_var == "ZHVI") {
       pal_domain = range(df_snap$ZHVI, na.rm = TRUE)
       pal = colorNumeric(palette = c("#3498db", "#f39c12", "#e74c3c"),
                           domain  = pal_domain, na.color = "#aaa")
-      color_vals  = df_snap$ZHVI
       legend_title = "ZHVI ($)"
 
     } else {
       pal_domain = range(df_snap$growth_1y, na.rm = TRUE)
       pal = colorNumeric(palette = c("#e74c3c", "#ecf0f1", "#27ae60"),
                           domain  = pal_domain, na.color = "#aaa")
-      color_vals  = df_snap$growth_1y
       legend_title = "1-Year<br>Growth"
     }
 
@@ -528,14 +549,15 @@ server = function(input, output, session) {
     ))
     names(popup_txt) = df_snap$RegionName
 
-    # Attempt to get ZCTA polygon boundaries from tigris
+    # Attempt to get ZCTA polygon boundaries from tigris using ZIP prefix
+    # filtering (avoids hardcoding states; works for any metro)
     map_data = tryCatch({
       if (HAS_TIGRIS) {
-        stl_zips = unique(df_snap$RegionName)
-        zctas_mo = tigris::zctas(state = "MO", year = 2020, cb = TRUE)
-        zctas_il = tigris::zctas(state = "IL", year = 2020, cb = TRUE)
-        zctas    = rbind(zctas_mo, zctas_il)
-        zctas    = zctas[zctas$ZCTA5CE20 %in% stl_zips, ]
+        metro_zips   = unique(df_snap$RegionName)
+        zip_prefixes = unique(substr(metro_zips, 1, 3))
+        zctas = tigris::zctas(year = 2020, cb = TRUE, starts_with = zip_prefixes)
+        zctas = zctas[zctas$ZCTA5CE20 %in% metro_zips, ]
+        zctas = sf::st_transform(zctas, crs = 4326)
 
         # Join ZHVI summary data into the sf object
         zctas = dplyr::left_join(zctas, df_snap, by = c("ZCTA5CE20" = "RegionName"))
@@ -543,22 +565,27 @@ server = function(input, output, session) {
       } else {
         NULL
       }
-    }, error = function(e) NULL)
+    }, error = function(e) { message("ZCTA fetch failed: ", e$message); NULL })
 
-    # Build base map centred on St. Louis
+    # Store fill colours as a column in map_data for reliable rendering
+    # Build base map; fit bounds dynamically to loaded ZCTAs when available
     m = leaflet() |>
       addTiles(urlTemplate = "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
-               attribution  = "© OpenStreetMap © CARTO") |>
-      setView(lng = -90.1994, lat = 38.6270, zoom = 10)
+               attribution  = "© OpenStreetMap © CARTO")
 
     if (!is.null(map_data) && nrow(map_data) > 0) {
-      fill_colors = pal(map_data[[color_var]])
+      map_data[["fill_col"]] <- pal(map_data[[color_var]])
       pop_txt     = popup_txt[map_data$ZCTA5CE20]
 
+      bbox = sf::st_bbox(map_data)
       m = m |>
+        fitBounds(
+          lng1 = as.numeric(bbox["xmin"]), lat1 = as.numeric(bbox["ymin"]),
+          lng2 = as.numeric(bbox["xmax"]), lat2 = as.numeric(bbox["ymax"])
+        ) |>
         addPolygons(
           data        = map_data,
-          fillColor   = fill_colors,
+          fillColor   = ~fill_col,
           fillOpacity = 0.7,
           color       = "#555",
           weight      = 0.8,
@@ -571,11 +598,12 @@ server = function(input, output, session) {
           ),
           label       = ~ZCTA5CE20
         ) |>
-        addLegend("bottomright", pal = pal, values = color_vals,
+        addLegend("bottomright", pal = pal, values = map_data[[color_var]],
                   title = legend_title, opacity = 0.8)
     } else {
-      # Fallback: show text note on map
+      # Fallback: centre on contiguous US and show a note
       m = m |>
+        setView(lng = -98.5795, lat = 39.8283, zoom = 4) |>
         addControl(
           html = paste0(
             "<div style='background:white;padding:10px;border-radius:5px;",
@@ -634,7 +662,7 @@ server = function(input, output, session) {
                                      "Date: %{x|%b %Y}<br>",
                                      "ZHVI: $%{y:,.0f}<extra></extra>")) |>
       layout(
-        title  = list(text = paste0("ZHVI Over Time — St. Louis Metro (ZIP Codes)", note),
+        title  = list(text = paste0("ZHVI Over Time — ", input$selected_metro, " (ZIP Codes)", note),
                       font = list(size = 14)),
         xaxis  = list(title = ""),
         yaxis  = list(title = "Zillow Home Value Index ($)",
