@@ -215,12 +215,12 @@ ui = dashboardPage(
             plotlyOutput("afford_donut", height = "200px"),
             hr(),
             tags$p(class = "info-note",
-              "Map shows the latest available ZHVI snapshot coloured by ",
-              "affordability ratio (monthly housing cost / monthly income). ",
-              "ZIP code polygon boundaries are sourced from the US Census ",
+              "Map shows ZIP code polygons coloured by the selected variable. ",
+              "Hover over a polygon to see ZHVI, monthly cost, and affordability ",
+              "details. Polygon boundaries are ZCTA shapefiles from the US Census ",
               "Bureau via the tigris package."
             ),
-            radioButtons("map_color_var", "Colour circles by:",
+            radioButtons("map_color_var", "Colour polygons by:",
                          choices = c(
                            "Affordability Ratio" = "afford_ratio",
                            "Latest ZHVI"         = "ZHVI",
@@ -634,7 +634,7 @@ server = function(input, output, session) {
                                      "Date: %{x|%b %Y}<br>",
                                      "ZHVI: $%{y:,.0f}<extra></extra>")) |>
       layout(
-        title  = list(text = paste0("ZHVI Over Time — St. Louis Metro (ZIP Code)", note),
+        title  = list(text = paste0("ZHVI Over Time — St. Louis Metro (ZIP Codes)", note),
                       font = list(size = 14)),
         xaxis  = list(title = ""),
         yaxis  = list(title = "Zillow Home Value Index ($)",

@@ -118,9 +118,6 @@ clean_zhvi_wide_to_long = function(df_wide, extra_keep_cols = character(0)) {
 # Loads and returns tidy ZIP5-level ZHVI data for the St. Louis metro.
 # RegionName is a 5-digit ZIP code string.
 #
-# Used as the primary data source for all affordability analysis, charts,
-# tables, and the choropleth map (ZCTA polygon boundaries from tigris).
-#
 # Returns: data frame with columns:
 #   RegionID, SizeRank, RegionName, RegionType, StateName,
 #   State, Metro, City, CountyName, Date, ZHVI
